@@ -147,6 +147,11 @@ function createReadOnlyBoard(mountEl) {
         collapsedSections: new Set(board.collapsed_sections || [])
       };
       render();
+      // A board freshly inserted into the DOM can have its first render measured
+      // before the browser has fully settled layout for that new subtree, which
+      // shows up as the first line getting zeroed-out geometry. One more render
+      // on the next frame (after layout has definitely settled) self-corrects it.
+      requestAnimationFrame(render);
     },
     render,
     destroy() { activeReadOnlyBoards.delete(instance); root.remove(); }
