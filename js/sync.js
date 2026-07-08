@@ -36,14 +36,26 @@ export function normalizeName(s) {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+const PROFILE_COLUMNS = "id, name_key, display_name, inbox_content, inbox_collapsed, inbox_unseen";
+
 // Returns the existing profile row for this normalized name, or null if none exists.
 export async function findProfileByName(displayName) {
   const nameKey = normalizeName(displayName);
   if (!nameKey) return null;
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, name_key, display_name")
+    .select(PROFILE_COLUMNS)
     .eq("name_key", nameKey)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
+export async function getProfileById(id) {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select(PROFILE_COLUMNS)
+    .eq("id", id)
     .maybeSingle();
   if (error) throw error;
   return data;
@@ -56,7 +68,7 @@ export async function createProfile(displayName) {
   const { data, error } = await supabase
     .from("profiles")
     .insert({ name_key: nameKey, display_name: displayName.trim() })
-    .select("id, name_key, display_name")
+    .select(PROFILE_COLUMNS)
     .single();
   if (error) throw error;
   return data;
@@ -65,10 +77,54 @@ export async function createProfile(displayName) {
 export async function listProfiles() {
   const { data, error } = await supabase
     .from("profiles")
-    .select("id, name_key, display_name")
+    .select(PROFILE_COLUMNS)
     .order("display_name", { ascending: true });
   if (error) throw error;
   return data || [];
+}
+
+// Appends new task lines to someone else's inbox and flags it unseen. Reads the
+// current content first rather than trusting a possibly-stale local copy, since
+// the whole point is that other people may be adding to it concurrently.
+export async function appendToInbox(profileId, newLines) {
+  const current = await getProfileById(profileId);
+  const base = (current?.inbox_content || "").replace(/\s*$/, "");
+  const content = (base ? base + "\n" : "") + newLines.replace(/\s*$/, "");
+  return setInboxContent(profileId, content, { unseen: true });
+}
+
+// Generic inbox content setter — used for appends (from others) and for the
+// owner's own dismiss / "add to my list" actions (which remove an item).
+export async function setInboxContent(profileId, content, { unseen } = {}) {
+  const patch = { inbox_content: content };
+  if (unseen !== undefined) patch.inbox_unseen = unseen;
+  const { data, error } = await supabase
+    .from("profiles")
+    .update(patch)
+    .eq("id", profileId)
+    .select(PROFILE_COLUMNS)
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function setInboxCollapsed(profileId, collapsed) {
+  const { error } = await supabase.from("profiles").update({ inbox_collapsed: collapsed }).eq("id", profileId);
+  if (error) throw error;
+}
+
+export async function markInboxSeen(profileId) {
+  const { error } = await supabase.from("profiles").update({ inbox_unseen: false }).eq("id", profileId);
+  if (error) throw error;
+}
+
+// Live updates for one person's inbox badge. Returns an unsubscribe function.
+export function subscribeToProfileChanges(profileId, onChange) {
+  const channel = supabase
+    .channel("profile-" + profileId)
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "profiles", filter: `id=eq.${profileId}` }, onChange)
+    .subscribe();
+  return () => supabase.removeChannel(channel);
 }
 
 const BOARD_COLUMNS =

@@ -4,12 +4,15 @@
 // by the resolved profile's id instead of a browser-local tab index.
 "use strict";
 
-import { normalize, parseTasks, buildSectionMap, hexA, ageStyle, measureLines } from "./renderer.js";
-import { loadBoard, saveBoard, listBoardsForOwner } from "./sync.js";
+import { normalize, parseTasks, buildSectionMap, hexA, ageStyle, measureLines, renderReadOnlyBoxes } from "./renderer.js";
+import {
+  loadBoard, saveBoard, listBoardsForOwner,
+  setInboxContent, setInboxCollapsed, markInboxSeen, subscribeToProfileChanges
+} from "./sync.js";
 
 let ta, mirror, overlay, panel, clist, countEl, ghost, tabbar;
+let inboxTa, inboxMirror, inboxOverlay, inboxPanelEl, inboxBadge, inboxToggleBtn;
 let profile = null;
-let myProfile = null; // the signed-in user, captured once — never reassigned by switchToProfile
 let boardsCache = [];
 let activeTab = 0;
 let meta = {};
@@ -20,6 +23,13 @@ let currentSectionMap = [];
 let dropSlots = [];
 let drag = null;
 let saveTimer = null;
+
+// ---- "Assigned" inbox: tasks other people added for you, via Team view's
+// compose modal. Only the owner can act on these (add to their list / dismiss);
+// nobody else's edits can touch the real board directly. See teamView.js.
+let inboxContent = "";
+let inboxUnseen = false;
+let inboxCollapsedSections = new Set(); // client-side only, not persisted
 
 function defaultBoard(tabIndex) {
   return {
@@ -357,6 +367,107 @@ function renderCompleted() {
   });
 }
 
+// ---- Assigned inbox ----
+function renderInbox() {
+  renderReadOnlyBoxes(
+    { taEl: inboxTa, mirrorEl: inboxMirror, overlayEl: inboxOverlay },
+    {
+      text: inboxContent,
+      meta: {},
+      collapsedSections: inboxCollapsedSections,
+      onToggleSection: key => {
+        if (inboxCollapsedSections.has(key)) inboxCollapsedSections.delete(key);
+        else inboxCollapsedSections.add(key);
+        renderInbox();
+      },
+      onBoxCreated: (box, task) => {
+        const actions = document.createElement("div");
+        actions.className = "inbox-box-actions";
+        const addBtn = document.createElement("button");
+        addBtn.className = "inbox-action-btn"; addBtn.title = "Add to my list"; addBtn.textContent = "+";
+        addBtn.addEventListener("click", e => { e.stopPropagation(); addInboxTaskToMyList(task); });
+        const dismissBtn = document.createElement("button");
+        dismissBtn.className = "inbox-action-btn"; dismissBtn.title = "Dismiss"; dismissBtn.textContent = "×";
+        dismissBtn.addEventListener("click", e => { e.stopPropagation(); dismissInboxTask(task); });
+        actions.appendChild(addBtn); actions.appendChild(dismissBtn);
+        box.appendChild(actions);
+      }
+    }
+  );
+}
+
+function removeInboxTaskLines(task) {
+  const lines = inboxContent.split("\n");
+  lines.splice(task.start, task.end - task.start + 1);
+  if (lines[task.start] === "" && lines[task.start - 1] === "") lines.splice(task.start, 1);
+  return lines.join("\n");
+}
+
+function persistInbox() {
+  setInboxContent(profile.id, inboxContent).catch(err => console.error("inbox save failed", err));
+}
+
+function addInboxTaskToMyList(task) {
+  let add = "\n>" + task.title;
+  if (task.notes && task.notes.length) add += "\n" + task.notes.map(n => "\t" + n).join("\n");
+  ta.value = ta.value.replace(/\s*$/, "") + "\n" + add.replace(/^\n/, "");
+  saveText(); render();
+
+  inboxContent = removeInboxTaskLines(task);
+  persistInbox();
+  renderInbox();
+}
+
+function dismissInboxTask(task) {
+  inboxContent = removeInboxTaskLines(task);
+  persistInbox();
+  renderInbox();
+}
+
+function updateInboxBadge() {
+  inboxBadge.hidden = !(inboxPanelEl.classList.contains("collapsed") && inboxUnseen);
+}
+
+function initInbox(p) {
+  inboxContent = p.inbox_content || "";
+  inboxUnseen = !!p.inbox_unseen;
+  if (p.inbox_collapsed) inboxPanelEl.classList.add("collapsed");
+  else inboxPanelEl.classList.remove("collapsed");
+
+  // Already expanded with unseen content on load — they're seeing it right now.
+  if (!p.inbox_collapsed && inboxUnseen) {
+    inboxUnseen = false;
+    markInboxSeen(profile.id).catch(err => console.error(err));
+  }
+
+  renderInbox();
+  updateInboxBadge();
+
+  inboxToggleBtn.addEventListener("click", () => {
+    const collapsed = inboxPanelEl.classList.toggle("collapsed");
+    setInboxCollapsed(profile.id, collapsed).catch(err => console.error(err));
+    if (!collapsed && inboxUnseen) {
+      inboxUnseen = false;
+      updateInboxBadge();
+      markInboxSeen(profile.id).catch(err => console.error(err));
+    }
+  });
+
+  subscribeToProfileChanges(profile.id, payload => {
+    const row = payload.new;
+    if (!row) return;
+    inboxContent = row.inbox_content || "";
+    if (!inboxPanelEl.classList.contains("collapsed")) {
+      inboxUnseen = false;
+      markInboxSeen(profile.id).catch(err => console.error(err));
+    } else {
+      inboxUnseen = !!row.inbox_unseen;
+    }
+    renderInbox();
+    updateInboxBadge();
+  });
+}
+
 // ---- complete / restore ----
 function completeTask(idx) {
   const t = blocks[idx]; if (!t) return;
@@ -567,29 +678,8 @@ function wireEvents() {
   });
 }
 
-// Swaps which profile's boards this editor is bound to. Used both for the initial
-// load of your own list and for switching into "editing someone else's list" mode —
-// the editor, drag logic, and tab bar are otherwise identical either way.
-async function loadProfile(p, preferredTab) {
-  profile = p;
-  await ensureBoardsLoaded();
-  activeTab = preferredTab != null ? preferredTab : 0;
-  if (activeTab < 0 || activeTab >= boardsCache.length) activeTab = 0;
-  loadTabState();
-  updateTabBar();
-  render();
-  renderCompleted();
-}
-
-export async function switchToProfile(p) {
-  await loadProfile(p);
-}
-
-export function getMyProfile() { return myProfile; }
-export function isViewingOwnProfile() { return !!profile && !!myProfile && profile.id === myProfile.id; }
-
 export async function initPersonalView(p) {
-  myProfile = p;
+  profile = p;
   ta = document.getElementById("ta");
   mirror = document.getElementById("mirror");
   overlay = document.getElementById("overlay");
@@ -598,11 +688,25 @@ export async function initPersonalView(p) {
   countEl = document.getElementById("count");
   ghost = document.getElementById("ghost");
   tabbar = document.getElementById("tabbar");
+  inboxTa = document.getElementById("inboxTa");
+  inboxMirror = document.getElementById("inboxMirror");
+  inboxOverlay = document.getElementById("inboxOverlay");
+  inboxPanelEl = document.getElementById("inboxPanel");
+  inboxBadge = document.getElementById("inboxBadge");
+  inboxToggleBtn = document.getElementById("inboxToggle");
 
   document.getElementById("date").textContent =
     new Date().toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
 
-  const savedTab = parseInt(localStorage.getItem("todo.activeTab") || "0", 10) || 0;
-  await loadProfile(p, savedTab);
+  activeTab = parseInt(localStorage.getItem("todo.activeTab") || "0", 10) || 0;
+  await ensureBoardsLoaded();
+  if (activeTab < 0 || activeTab >= boardsCache.length) activeTab = 0;
+  loadTabState();
+  updateTabBar();
+
+  initInbox(p);
+
   wireEvents();
+  render();
+  renderCompleted();
 }

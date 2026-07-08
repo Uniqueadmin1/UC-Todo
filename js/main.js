@@ -2,7 +2,7 @@
 "use strict";
 
 import { resolveIdentity } from "./identity.js";
-import { initPersonalView, switchToProfile, getMyProfile, isViewingOwnProfile } from "./app.js";
+import { initPersonalView } from "./app.js";
 import { initTeamView } from "./teamView.js";
 import { clearCachedProfile } from "./sync.js";
 
@@ -39,35 +39,9 @@ async function main() {
   const teamEl = document.getElementById("teamView");
   const teamBtn = document.getElementById("teamToggle");
   const signOutBtn = document.getElementById("signOutBtn");
-  const banner = document.getElementById("editingBanner");
-  const bannerText = document.getElementById("editingBannerText");
-  const bannerDone = document.getElementById("editingBannerDone");
 
   let teamController = null;
   let inTeamView = false;
-
-  function updateEditingBanner(targetProfile) {
-    if (isViewingOwnProfile()) {
-      banner.hidden = true;
-    } else {
-      bannerText.textContent = `Editing ${targetProfile.display_name}'s list`;
-      banner.hidden = false;
-    }
-  }
-
-  async function enterEditMode(targetProfile) {
-    inTeamView = false;
-    teamBtn.textContent = "Team";
-    teamEl.style.display = "none";
-    personalEl.style.display = "flex";
-    await switchToProfile(targetProfile);
-    updateEditingBanner(targetProfile);
-  }
-
-  bannerDone.addEventListener("click", async () => {
-    await switchToProfile(getMyProfile());
-    banner.hidden = true;
-  });
 
   signOutBtn.addEventListener("click", () => {
     const ok = confirm("Sign out and clear this device's saved name? Type your name again anytime to get your list back.");
@@ -82,7 +56,7 @@ async function main() {
     if (inTeamView) {
       personalEl.style.display = "none";
       teamEl.style.display = "flex";
-      if (!teamController) teamController = await initTeamView(teamEl, { onEdit: enterEditMode });
+      if (!teamController) teamController = await initTeamView(teamEl);
     } else {
       teamEl.style.display = "none";
       personalEl.style.display = "flex";

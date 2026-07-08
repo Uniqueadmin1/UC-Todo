@@ -132,22 +132,6 @@
   }
   .tab-add:hover{color:var(--ink);background:rgba(255,255,255,.04);}
 
-  /* ---- Editing-someone-else's-list banner ---- */
-  .editing-banner{
-    flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:12px;
-    padding:8px 16px;
-    background:linear-gradient(180deg, rgba(242,182,90,.16), rgba(242,182,90,.05));
-    border-bottom:1px solid rgba(242,182,90,.35);
-    font-size:12px;color:#f2c98a;
-  }
-  .editing-banner[hidden]{display:none;}
-  .editing-banner button{
-    font:inherit;font-size:11px;color:#f2c98a;cursor:pointer;
-    border:1px solid rgba(242,182,90,.45);background:rgba(242,182,90,.1);
-    border-radius:7px;padding:5px 10px;
-  }
-  .editing-banner button:hover{background:rgba(242,182,90,.2);}
-
   /* ---- Body ---- */
   .body{flex:1;display:flex;min-height:0;}
 
@@ -266,6 +250,54 @@
     box-shadow:inset 2px 0 14px rgba(90,143,99,.35);
   }
 
+  /* ---- Assigned inbox: tasks other people added for you ---- */
+  .inbox-panel{
+    flex:0 0 260px;display:flex;flex-direction:column;min-width:0;
+    background:linear-gradient(195deg,#211f28,#1a1922);
+    border-left:1px solid var(--line);
+    box-shadow:inset 1px 0 0 rgba(177,139,255,.08);
+    transition:flex-basis .2s ease, background .25s ease, box-shadow .25s ease;
+  }
+  .inbox-panel.collapsed{flex-basis:34px;}
+  .inbox-panel .ihead{
+    display:flex;align-items:center;gap:8px;
+    padding:10px 12px;border-bottom:1px solid var(--line);
+    user-select:none;
+  }
+  .inbox-panel .itoggle{
+    position:relative;cursor:pointer;border:1px solid var(--line);background:#2a2a2b;border-radius:6px;
+    width:22px;height:22px;display:flex;align-items:center;justify-content:center;
+    color:var(--muted);font-size:13px;flex:0 0 auto;
+  }
+  .inbox-panel .itoggle:hover{color:var(--ink);}
+  .inbox-panel .ilabel{font-size:13px;font-weight:600;color:#b18bff;letter-spacing:.4px;white-space:nowrap;}
+  .inbox-panel.collapsed .ilabel,.inbox-panel.collapsed .ibody{display:none;}
+  .inbox-panel.collapsed .ivlabel{
+    writing-mode:vertical-rl;text-orientation:mixed;
+    color:var(--muted);font-size:11px;letter-spacing:1px;margin:10px auto;user-select:none;
+  }
+  .ivlabel{display:none;}
+  .inbox-panel.collapsed .ivlabel{display:block;}
+  .ibody{position:relative;flex:1;min-height:0;}
+
+  .inbox-badge{
+    position:absolute;top:-4px;right:-4px;
+    width:14px;height:14px;border-radius:50%;
+    background:#e0574a;color:#fff;font-size:9px;font-weight:700;line-height:1;
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 0 6px rgba(224,87,74,.6);
+  }
+  .inbox-badge[hidden]{display:none;}
+
+  .inbox-box-actions{position:absolute;top:2px;right:2px;display:flex;gap:2px;}
+  .inbox-action-btn{
+    font:inherit;font-size:10px;line-height:1;color:var(--muted);cursor:pointer;
+    border:1px solid var(--line);background:rgba(42,42,43,.9);border-radius:4px;
+    width:16px;height:16px;display:flex;align-items:center;justify-content:center;
+    pointer-events:auto;
+  }
+  .inbox-action-btn:hover{color:var(--ink);border-color:var(--accent);}
+
   #ghost{
     position:fixed;z-index:9999;pointer-events:none;
     background:#2a2b2c;border:1.5px solid var(--accent);border-radius:8px;
@@ -303,6 +335,12 @@
     padding:9px 10px;outline:0;
   }
   .identity-input:focus{border-color:var(--accent);}
+  .add-task-input{
+    width:100%;min-height:110px;resize:vertical;font:inherit;font-size:13px;color:var(--ink);
+    background:#191b1f;border:1px solid var(--line);border-radius:8px;
+    padding:9px 10px;outline:0;line-height:1.7;
+  }
+  .add-task-input:focus{border-color:var(--accent);}
   .identity-error{color:#e08a7d;font-size:11px;min-height:14px;margin-top:8px;}
   .identity-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px;}
   .identity-btn{
@@ -412,13 +450,15 @@
             <li><b>Tabs</b>: click to switch &middot; double-click to rename &middot; <b>+</b> for a new list</li>
             <li><b>Team</b> shows everyone's lists at once</li>
             <li><b>&#10530;</b> opens one person's list full-screen</li>
-            <li><b>&#9998;</b> lets you edit someone else's list directly</li>
+            <li><b>&#9998;</b> lets you add a task to someone's <b>Assigned</b> column &mdash; it never touches their real list</li>
           </ul>
         </div>
 
         <div class="instructions-group">
           <div class="instructions-group-label">Other</div>
           <ul>
+            <li><b>Assigned</b> column: tasks others added for you; <b>+</b> moves one onto your list, <b>&times;</b> dismisses it</li>
+            <li>A red <b>!</b> on the collapsed Assigned tab means something new is waiting</li>
             <li><b>Completed</b> panel: click "restore" to bring a task back</li>
             <li><b>export .txt</b> downloads your list as plain text</li>
             <li>Your list follows your <b>name</b> &mdash; type it again on a new computer to get it back</li>
@@ -433,10 +473,6 @@
   </header>
 
   <div id="personalView" style="display:flex;flex-direction:column;flex:1;min-height:0;">
-    <div class="editing-banner" id="editingBanner" hidden>
-      <span id="editingBannerText"></span>
-      <button id="editingBannerDone" type="button">Done &mdash; back to my list</button>
-    </div>
     <div class="tabbar" id="tabbar"></div>
 
     <div class="body">
@@ -444,6 +480,22 @@
         <div class="mirror" id="mirror"></div>
         <textarea id="ta" spellcheck="true" autocomplete="off" autocapitalize="off"></textarea>
         <div class="overlay" id="overlay"></div>
+      </div>
+
+      <div class="inbox-panel" id="inboxPanel">
+        <div class="ihead">
+          <div class="itoggle" id="inboxToggle" title="show / hide Assigned">
+            &#9776;
+            <div class="inbox-badge" id="inboxBadge" hidden>!</div>
+          </div>
+          <div class="ilabel">Assigned</div>
+          <div class="ivlabel">ASSIGNED</div>
+        </div>
+        <div class="ibody">
+          <div class="ro-mirror" id="inboxMirror"></div>
+          <textarea class="ro-ta" id="inboxTa" readonly tabindex="-1"></textarea>
+          <div class="ro-overlay" id="inboxOverlay"></div>
+        </div>
       </div>
 
       <div class="completed" id="panel">
